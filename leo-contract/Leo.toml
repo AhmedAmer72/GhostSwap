@@ -1,0 +1,7 @@
+[program]
+name = "ghostswap_v1"
+version = "0.1.0"
+description = "GhostSwap - Zero-Knowledge P2P OTC Trading Protocol on Aleo"
+license = "MIT"
+
+[dependencies]
