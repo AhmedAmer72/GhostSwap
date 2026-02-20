@@ -200,7 +200,7 @@ export function ClaimTrade({ linkData }: ClaimTradeProps) {
             )}
 
             {/* Decrypted Trade View */}
-            {status === 'decrypted' && trade && (
+            {(status === 'decrypted' || status === 'confirming') && trade && (
               <motion.div
                 key="decrypted"
                 initial={{ opacity: 0, scale: 0.95 }}
