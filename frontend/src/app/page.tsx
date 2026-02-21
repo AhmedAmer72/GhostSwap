@@ -20,8 +20,8 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo.png" alt="GhostSwap" width={48} height={48} className="rounded-xl" />
-              <span className="font-semibold text-lg text-white">GhostSwap</span>
+              <Image src="/logo.png" alt="GhostSwap" width={56} height={56} className="rounded-xl" />
+              <span className="font-semibold text-xl text-white">GhostSwap</span>
             </Link>
 
             {/* Wallet Button */}
@@ -45,7 +45,7 @@ export default function LandingPage() {
               transition={{ duration: 0.6 }}
               className="mb-8 flex justify-center"
             >
-              <Image src="/logo.png" alt="GhostSwap" width={160} height={160} className="rounded-3xl shadow-2xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={200} height={200} className="rounded-3xl shadow-2xl" />
             </motion.div>
 
             {/* App Name */}

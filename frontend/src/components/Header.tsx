@@ -22,11 +22,11 @@ export function Header() {
               animate={{ y: [0, -2, 0] }}
               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
             >
-              <Image src="/logo.png" alt="GhostSwap" width={48} height={48} className="rounded-xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={56} height={56} className="rounded-xl" />
             </motion.div>
             
             <div className="flex flex-col">
-              <span className="font-semibold text-lg text-white">
+              <span className="font-semibold text-xl text-white">
                 GhostSwap
               </span>
               <span className="text-[10px] text-white/40 -mt-1 tracking-widest uppercase">
