@@ -1,35 +1,16 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { shortenAddress } from '@/utils/crypto';
 import { LogOut, Copy, Check, ExternalLink, ChevronDown } from 'lucide-react';
-import { Network } from '@provablehq/aleo-types';
 
 export function WalletButton() {
-  const { address, disconnect, connected, connecting, wallet, connect } = useWallet();
+  const { address, disconnect, connected } = useWallet();
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  // Auto-reconnect on mount if wallet was previously connected
-  useEffect(() => {
-    const tryReconnect = async () => {
-      const savedWallet = localStorage.getItem('ghostswap-wallet');
-      if (savedWallet && wallet && !connected && !connecting) {
-        try {
-          await connect(Network.TESTNET);
-        } catch (e) {
-          console.log('Auto-reconnect failed:', e);
-        }
-      }
-    };
-    
-    // Small delay to allow wallet adapter to initialize
-    const timeout = setTimeout(tryReconnect, 500);
-    return () => clearTimeout(timeout);
-  }, [wallet, connected, connecting, connect]);
 
   const handleCopy = async () => {
     if (address) {

@@ -17,11 +17,11 @@ export default function LandingPage() {
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50">
         <div className="glass-dark border-b border-white/5">
-          <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="max-w-7xl mx-auto px-6 h-28 py-2 flex items-center justify-between">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo.png" alt="GhostSwap" width={56} height={56} className="rounded-xl" />
-              <span className="font-semibold text-xl text-white">GhostSwap</span>
+              <Image src="/logo.png" alt="GhostSwap" width={96} height={96} className="rounded-xl" />
+              <span className="font-bold text-2xl text-white">GhostSwap</span>
             </Link>
 
             {/* Wallet Button */}
@@ -45,7 +45,7 @@ export default function LandingPage() {
               transition={{ duration: 0.6 }}
               className="mb-8 flex justify-center"
             >
-              <Image src="/logo.png" alt="GhostSwap" width={200} height={200} className="rounded-3xl shadow-2xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={320} height={320} className="rounded-3xl shadow-2xl" />
             </motion.div>
 
             {/* App Name */}
