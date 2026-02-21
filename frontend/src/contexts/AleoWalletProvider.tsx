@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
-import { AleoWalletProvider as ProvableWalletProvider, useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import React, { useEffect, useRef, useState, useMemo, createContext, useContext } from 'react';
+import { AleoWalletProvider as ProvableWalletProvider, useWallet, WalletContext as ProvableWalletContext } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletModalProvider } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
 import { LeoWalletAdapter } from '@provablehq/aleo-wallet-adaptor-leo';
@@ -12,10 +12,19 @@ import '@provablehq/aleo-wallet-adaptor-react-ui/dist/styles.css';
 const PROGRAM_ID = 'ghostswap_otc_v2.aleo';
 const STORAGE_KEY = 'ghostswap-wallet';
 
-// Static singleton wallet adapters - created once at module load
-const shieldAdapter = new ShieldWalletAdapter();
-const leoAdapter = new LeoWalletAdapter({ appName: 'GhostSwap' });
-const WALLETS = [shieldAdapter, leoAdapter];
+// Lazy wallet adapter initialization - only created once on client
+let walletsInstance: (ShieldWalletAdapter | LeoWalletAdapter)[] | null = null;
+
+function getWallets() {
+  if (typeof window === 'undefined') return [];
+  if (!walletsInstance) {
+    walletsInstance = [
+      new ShieldWalletAdapter(),
+      new LeoWalletAdapter({ appName: 'GhostSwap' }),
+    ];
+  }
+  return walletsInstance;
+}
 
 // Auto-reconnect component that runs inside the wallet context
 function WalletAutoConnect({ children }: { children: React.ReactNode }) {
@@ -23,7 +32,7 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
   const reconnectAttempted = useRef(false);
 
   useEffect(() => {
-    // Only attempt reconnect once per mount
+    // Only attempt reconnect once per session
     if (reconnectAttempted.current || connected || connecting) return;
 
     const savedWallet = localStorage.getItem(STORAGE_KEY);
@@ -38,7 +47,6 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
           reconnectAttempted.current = true;
           console.log('[GhostSwap] Auto-reconnecting to:', walletName);
           selectWallet(savedAdapter.adapter.name);
-          // Small delay to ensure selection is processed
           setTimeout(() => {
             connect(network || Network.TESTNET).catch(e => console.log('[GhostSwap] Auto-connect failed:', e));
           }, 100);
@@ -56,10 +64,13 @@ interface WalletProviderProps {
   children: React.ReactNode;
 }
 
-export function AleoWalletProvider({ children }: WalletProviderProps) {
+// Internal provider that renders only on client
+function ClientWalletProvider({ children }: WalletProviderProps) {
+  const wallets = useMemo(() => getWallets(), []);
+
   return (
     <ProvableWalletProvider
-      wallets={WALLETS}
+      wallets={wallets}
       decryptPermission={DecryptPermission.AutoDecrypt}
       programs={[PROGRAM_ID, 'credits.aleo']}
       network={Network.TESTNET}
@@ -73,4 +84,20 @@ export function AleoWalletProvider({ children }: WalletProviderProps) {
       </WalletModalProvider>
     </ProvableWalletProvider>
   );
+}
+
+export function AleoWalletProvider({ children }: WalletProviderProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // During SSR or before mount, render children without wallet context
+  // This allows the page to render, then wallet loads on client
+  if (!mounted) {
+    return <>{children}</>;
+  }
+
+  return <ClientWalletProvider>{children}</ClientWalletProvider>;
 }
