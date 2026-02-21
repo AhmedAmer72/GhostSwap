@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * WalletButton — modelled after CloakStamp's TopNav wallet section.
+ *
+ * Three states (same logic as CloakStamp):
+ *  1. Not connected          → WalletMultiButton (opens wallet-select modal)
+ *  2. Connecting/reconnecting → ghost pill with spinner (no flash to state 1)
+ *  3. Connected              → custom dropdown with address + actions
+ */
+
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
@@ -7,34 +16,21 @@ import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { shortenAddress } from '@/utils/crypto';
 import { LogOut, Copy, Check, ExternalLink, ChevronDown, Loader2 } from 'lucide-react';
 
-const LAST_ADDRESS_KEY = 'ghostswap-last-address';
+const WALLET_NAME_KEY = 'ghostswap-wallet-name'; // set by SessionGuard when connected
 
 export function WalletButton() {
   const { address, disconnect, connected, connecting } = useWallet();
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Cache the last known address in localStorage so the button never flashes
-  // back to "Connect Wallet" while the adapter is re-establishing its session
-  // after a page navigation.
-  const [cachedAddress, setCachedAddress] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem(LAST_ADDRESS_KEY);
-  });
-
-  useEffect(() => {
-    if (connected && address) {
-      localStorage.setItem(LAST_ADDRESS_KEY, address);
-      setCachedAddress(address);
-    }
-    // Only wipe the cache when a real user-initiated disconnect occurs
-    // (i.e. not connected AND not in the middle of reconnecting).
-  }, [connected, address]);
+  // Read the cached address directly from localStorage (written by SessionGuard).
+  // This is the single source of truth — no separate state to get out of sync.
+  const hasCachedSession = typeof window !== 'undefined'
+    && !!localStorage.getItem(WALLET_NAME_KEY);
 
   const handleCopy = async () => {
-    const addr = address || cachedAddress;
-    if (addr) {
-      await navigator.clipboard.writeText(addr);
+    if (address) {
+      await navigator.clipboard.writeText(address);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -43,18 +39,18 @@ export function WalletButton() {
   const handleDisconnect = async () => {
     try {
       await disconnect();
-      localStorage.removeItem(LAST_ADDRESS_KEY);
-      setCachedAddress(null);
+      // Wipe backup key so SessionGuard doesn't try to restore.
+      localStorage.removeItem(WALLET_NAME_KEY);
+      localStorage.removeItem('ghostswap-wallet');
       setShowDropdown(false);
     } catch (e) {
       console.error('Disconnect failed:', e);
     }
   };
 
-  // While adapter is spinning up (connecting) but we have a cached address,
-  // show a lightweight "Reconnecting" pill instead of falling back to the
-  // "Connect Wallet" button.
-  if (!connected && connecting && cachedAddress) {
+  // State 2: adapter is (re)connecting and we know there's a saved session.
+  // Show a ghost pill instead of reverting to "Connect Wallet".
+  if (!connected && (connecting || hasCachedSession) && !address) {
     return (
       <div className="glass flex items-center gap-3 px-4 py-2.5 rounded-xl border border-white/10">
         <div className="relative w-8 h-8">
@@ -63,15 +59,14 @@ export function WalletButton() {
           </div>
         </div>
         <div className="flex flex-col items-start">
-          <span className="text-xs text-white/40">Reconnecting…</span>
-          <span className="font-mono text-sm text-white/60">{shortenAddress(cachedAddress)}</span>
+          <span className="text-xs text-white/40">Connecting…</span>
         </div>
         <Loader2 className="w-4 h-4 text-white/40 animate-spin" />
       </div>
     );
   }
 
-  // Not connected and no previous session → plain connect button.
+  // State 1: no connection, no saved session → open wallet modal.
   if (!connected || !address) {
     return (
       <div className="wallet-adapter-wrapper">
