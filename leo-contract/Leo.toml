@@ -1,7 +1,7 @@
 [program]
-name = "ghostswap_v1"
+name = "ghostswap_otc_v2"
 version = "0.1.0"
-description = "GhostSwap - Zero-Knowledge P2P OTC Trading Protocol on Aleo"
+description = "ZK P2P OTC Trading on Aleo"
 license = "MIT"
 
 [dependencies]

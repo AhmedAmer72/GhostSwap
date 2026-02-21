@@ -2,8 +2,9 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { motion } from 'framer-motion';
-import { ArrowRight, Ghost } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { WalletButton } from '@/components/WalletButton';
 
 export default function LandingPage() {
@@ -19,9 +20,7 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center">
-                <Ghost className="w-5 h-5 text-black" />
-              </div>
+              <Image src="/logo.png" alt="GhostSwap" width={36} height={36} className="rounded-xl" />
               <span className="font-semibold text-lg text-white">GhostSwap</span>
             </Link>
 
@@ -46,9 +45,7 @@ export default function LandingPage() {
               transition={{ duration: 0.6 }}
               className="mb-8"
             >
-              <div className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-white shadow-2xl">
-                <Ghost className="w-14 h-14 text-black" />
-              </div>
+              <Image src="/logo.png" alt="GhostSwap" width={120} height={120} className="rounded-3xl shadow-2xl" />
             </motion.div>
 
             {/* App Name */}

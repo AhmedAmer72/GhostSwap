@@ -2,11 +2,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '@/contexts/WalletContext';
 import { TradeOrder, Token, useAppStore } from '@/utils/store';
 import { 
-  executeCreateOrder, 
+  executeCreate, 
   executeSwap, 
-  executeCancelOrder,
-  mintTestTokens,
+  executeCancel,
+  executeMint,
   getGhostTokenRecords,
+  GhostTokenRecord,
+  TradeOrderRecord,
   PROGRAM_ID 
 } from '@/utils/aleo';
 import { generateTradeOrder, createShareableUrl } from '@/utils/crypto';

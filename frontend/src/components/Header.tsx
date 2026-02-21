@@ -2,9 +2,10 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { WalletButton } from './WalletButton';
-import { Ghost, History, PlusCircle, Link2 } from 'lucide-react';
+import { History, PlusCircle, Link2 } from 'lucide-react';
 
 export function Header() {
   return (
@@ -21,9 +22,7 @@ export function Header() {
               animate={{ y: [0, -2, 0] }}
               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
             >
-              <div className="relative w-9 h-9 bg-white rounded-xl flex items-center justify-center">
-                <Ghost className="w-5 h-5 text-black" />
-              </div>
+              <Image src="/logo.png" alt="GhostSwap" width={36} height={36} className="rounded-xl" />
             </motion.div>
             
             <div className="flex flex-col">

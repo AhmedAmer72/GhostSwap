@@ -7,16 +7,22 @@ export const metadata: Metadata = {
   description: 'Zero-knowledge OTC desk for trustless, atomic token swaps using shareable links. Trade privately without MEV or wallet doxxing.',
   keywords: ['Aleo', 'GhostSwap', 'Privacy', 'DEX', 'OTC', 'Zero-Knowledge', 'Token Swap', 'Crypto'],
   authors: [{ name: 'GhostSwap' }],
+  icons: {
+    icon: '/logo.png',
+    apple: '/logo.png',
+  },
   openGraph: {
     title: 'GhostSwap | Private P2P Token Trading',
     description: 'Zero-knowledge OTC desk for trustless, atomic token swaps',
     type: 'website',
     siteName: 'GhostSwap',
+    images: ['/logo.png'],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'GhostSwap | Private P2P Token Trading',
     description: 'Zero-knowledge OTC desk for trustless, atomic token swaps',
+    images: ['/logo.png'],
   },
 };
 

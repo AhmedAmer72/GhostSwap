@@ -7,11 +7,11 @@ import { TradeOrder, Token, TOKENS } from './store';
 export const ALEO_NETWORK = {
   testnet: {
     endpoint: 'https://api.explorer.aleo.org/v1/testnet',
-    programId: 'ghostswap_v1.aleo',
+    programId: 'ghostswap_otc_v2.aleo',
   },
   mainnet: {
     endpoint: 'https://api.explorer.aleo.org/v1/mainnet',
-    programId: 'ghostswap_v1.aleo',
+    programId: 'ghostswap_otc_v2.aleo',
   },
 };
 
@@ -42,8 +42,6 @@ export interface TradeOrderRecord extends AleoRecord {
     taker_token_id: string;
     taker_amount: string;
     order_id: string;
-    nonce: string;
-    expires_at: string;
   };
 }
 
@@ -81,33 +79,27 @@ export function parseAleoU64(value: string): string {
   return value.replace('u64', '');
 }
 
-// Build transition inputs for create_order
-export function buildCreateOrderInputs(
+// Build transition inputs for create (matches deployed contract)
+export function buildCreateInputs(
   makerToken: GhostTokenRecord,
-  takerTokenId: string,
-  takerAmount: string,
-  nonce: string,
-  expiresAt: number
+  wantTokenId: string,
+  wantAmount: string
 ): string[] {
   return [
-    JSON.stringify(makerToken), // maker_token: GhostToken record
-    toAleoField(takerTokenId),  // taker_token_id: field
-    toAleoU128(takerAmount),    // taker_amount: u128
-    toAleoField(nonce),         // nonce: field  
-    toAleoU64(expiresAt),       // expires_at: u64
+    JSON.stringify(makerToken), // token: GhostToken record
+    toAleoField(wantTokenId),   // want_id: field
+    toAleoU128(wantAmount),     // want_amt: u128
   ];
 }
 
-// Build transition inputs for execute_swap
-export function buildExecuteSwapInputs(
-  claimTicket: AleoRecord,
-  takerToken: GhostTokenRecord,
-  makerOrder: TradeOrderRecord
+// Build transition inputs for swap (matches deployed contract)
+export function buildSwapInputs(
+  order: TradeOrderRecord,
+  payment: GhostTokenRecord
 ): string[] {
   return [
-    JSON.stringify(claimTicket),
-    JSON.stringify(takerToken),
-    JSON.stringify(makerOrder),
+    JSON.stringify(order),   // order: TradeOrder record
+    JSON.stringify(payment), // payment: GhostToken record
   ];
 }
 
@@ -248,43 +240,23 @@ export async function disconnectShieldWallet(): Promise<void> {
   }
 }
 
-// Execute create_order transition
-export async function executeCreateOrder(
-  makerToken: Token,
-  makerAmount: string,
-  takerToken: Token,
-  takerAmount: string,
-  nonce: string,
-  expiresAt: number,
-  fee: number = 100000 // 0.1 ALEO default fee
+// Execute create transition (matches deployed contract)
+export async function executeCreate(
+  ghostTokenRecord: GhostTokenRecord,
+  wantTokenId: string,
+  wantAmount: string,
+  fee: number = 500000 // 0.5 ALEO default fee
 ): Promise<string> {
   const wallet = getShieldWallet();
   if (!wallet) {
     throw new Error('Shield Wallet not connected');
   }
 
-  // Build the GhostToken record for maker
-  const makerTokenRecord: GhostTokenRecord = {
-    owner: '', // Will be filled by wallet
-    nonce: '',
-    data: {
-      owner: '',
-      token_id: makerToken.tokenId,
-      amount: toAleoU128(makerAmount),
-    },
-  };
-
-  const inputs = [
-    JSON.stringify(makerTokenRecord),
-    toAleoField(takerToken.tokenId.replace('field', '')),
-    toAleoU128(takerAmount),
-    toAleoField(nonce),
-    toAleoU64(expiresAt),
-  ];
+  const inputs = buildCreateInputs(ghostTokenRecord, wantTokenId, wantAmount);
 
   const txId = await wallet.requestTransaction({
     programId: PROGRAM_ID,
-    functionName: 'create_order',
+    functionName: 'create',
     inputs,
     fee,
   });
@@ -292,99 +264,42 @@ export async function executeCreateOrder(
   return txId;
 }
 
-// Execute swap transition
+// Execute swap transition (matches deployed contract)
 export async function executeSwap(
-  order: TradeOrder,
-  takerToken: Token,
-  takerAmount: string,
-  fee: number = 150000 // 0.15 ALEO default fee for swap
+  orderRecord: TradeOrderRecord,
+  paymentRecord: GhostTokenRecord,
+  fee: number = 750000 // 0.75 ALEO default fee for async swap
 ): Promise<string> {
   const wallet = getShieldWallet();
   if (!wallet) {
     throw new Error('Shield Wallet not connected');
   }
 
-  // In production, these records would come from the wallet
-  const claimTicket = {
-    owner: '',
-    nonce: '',
-    data: {
-      order_id: toAleoField(order.orderId),
-      maker_address: order.makerAddress,
-      maker_token_id: order.makerToken.tokenId,
-      maker_amount: toAleoU128(order.makerAmount),
-      taker_token_id: order.takerToken.tokenId,
-      taker_amount: toAleoU128(order.takerAmount),
-    },
-  };
-
-  const takerTokenRecord = {
-    owner: '',
-    nonce: '',
-    data: {
-      owner: '',
-      token_id: takerToken.tokenId,
-      amount: toAleoU128(takerAmount),
-    },
-  };
-
-  const makerOrderRecord = {
-    owner: order.makerAddress,
-    nonce: order.nonce,
-    data: {
-      owner: order.makerAddress,
-      maker_token_id: order.makerToken.tokenId,
-      maker_amount: toAleoU128(order.makerAmount),
-      taker_token_id: order.takerToken.tokenId,
-      taker_amount: toAleoU128(order.takerAmount),
-      order_id: toAleoField(order.orderId),
-      nonce: toAleoField(order.nonce),
-      expires_at: toAleoU64(order.expiresAt),
-    },
-  };
+  const inputs = buildSwapInputs(orderRecord, paymentRecord);
 
   const txId = await wallet.requestTransaction({
     programId: PROGRAM_ID,
-    functionName: 'execute_swap',
-    inputs: [
-      JSON.stringify(claimTicket),
-      JSON.stringify(takerTokenRecord),
-      JSON.stringify(makerOrderRecord),
-    ],
+    functionName: 'swap',
+    inputs,
     fee,
   });
 
   return txId;
 }
 
-// Cancel order transition
-export async function executeCancelOrder(
-  order: TradeOrder,
-  fee: number = 50000
+// Cancel order transition (matches deployed contract)
+export async function executeCancel(
+  orderRecord: TradeOrderRecord,
+  fee: number = 300000 // 0.3 ALEO fee
 ): Promise<string> {
   const wallet = getShieldWallet();
   if (!wallet) {
     throw new Error('Shield Wallet not connected');
   }
 
-  const orderRecord = {
-    owner: order.makerAddress,
-    nonce: order.nonce,
-    data: {
-      owner: order.makerAddress,
-      maker_token_id: order.makerToken.tokenId,
-      maker_amount: toAleoU128(order.makerAmount),
-      taker_token_id: order.takerToken.tokenId,
-      taker_amount: toAleoU128(order.takerAmount),
-      order_id: toAleoField(order.orderId),
-      nonce: toAleoField(order.nonce),
-      expires_at: toAleoU64(order.expiresAt),
-    },
-  };
-
   const txId = await wallet.requestTransaction({
     programId: PROGRAM_ID,
-    functionName: 'cancel_order',
+    functionName: 'cancel',
     inputs: [JSON.stringify(orderRecord)],
     fee,
   });
@@ -392,11 +307,11 @@ export async function executeCancelOrder(
   return txId;
 }
 
-// Mint test tokens (testnet only)
-export async function mintTestTokens(
+// Mint GhostTokens (testnet only - matches deployed contract)
+export async function executeMint(
   tokenId: string,
   amount: string,
-  fee: number = 50000
+  fee: number = 300000 // 0.3 ALEO fee
 ): Promise<string> {
   const wallet = getShieldWallet();
   if (!wallet) {
@@ -405,7 +320,7 @@ export async function mintTestTokens(
 
   const txId = await wallet.requestTransaction({
     programId: PROGRAM_ID,
-    functionName: 'mint_test_tokens',
+    functionName: 'mint',
     inputs: [
       toAleoField(tokenId.replace('field', '')),
       toAleoU128(amount),
