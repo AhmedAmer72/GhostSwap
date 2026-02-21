@@ -18,7 +18,7 @@ import {
   AleoWalletProvider as ProvableWalletProvider,
   useWallet,
 } from '@provablehq/aleo-wallet-adaptor-react';
-import { WalletName } from '@provablehq/aleo-wallet-adaptor-core';
+import { WalletName } from '@provablehq/aleo-wallet-standard';
 import { WalletModalProvider } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
 import { LeoWalletAdapter } from '@provablehq/aleo-wallet-adaptor-leo';
