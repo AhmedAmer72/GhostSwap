@@ -32,29 +32,59 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
   const reconnectAttempted = useRef(false);
 
   useEffect(() => {
-    // Only attempt reconnect once per session
-    if (reconnectAttempted.current || connected || connecting) return;
+    // Reset the flag whenever we gain a connection so that a future
+    // disconnect (e.g. brief drop during navigation) can trigger a fresh attempt.
+    if (connected) {
+      reconnectAttempted.current = false;
+      return;
+    }
+
+    // Don't start a second attempt if one is already in flight.
+    if (reconnectAttempted.current || connecting) return;
 
     const savedWallet = localStorage.getItem(STORAGE_KEY);
-    if (savedWallet) {
+    if (!savedWallet) return;
+
+    // Give the library's own autoConnect a head-start (500 ms) so the two
+    // mechanisms don't race against each other.
+    const timer = setTimeout(() => {
+      // Re-check state after the delay – library may have reconnected by now.
+      if (reconnectAttempted.current || connected) return;
+
+      // Parse the stored wallet name – the library may store it as a plain
+      // string OR as a JSON-encoded value.
+      let walletName: string;
       try {
-        const walletData = JSON.parse(savedWallet);
-        const walletName = walletData.walletName || walletData;
-        
-        // Find the saved wallet adapter
-        const savedAdapter = wallets.find(w => w.adapter.name === walletName);
-        if (savedAdapter && savedAdapter.readyState === 'Installed') {
-          reconnectAttempted.current = true;
-          console.log('[GhostSwap] Auto-reconnecting to:', walletName);
-          selectWallet(savedAdapter.adapter.name);
-          setTimeout(() => {
-            connect(network || Network.TESTNET).catch(e => console.log('[GhostSwap] Auto-connect failed:', e));
-          }, 100);
-        }
-      } catch (e) {
-        console.log('[GhostSwap] Failed to parse saved wallet:', e);
+        const parsed = JSON.parse(savedWallet);
+        walletName = typeof parsed === 'object' && parsed !== null
+          ? parsed.walletName ?? parsed.name ?? String(parsed)
+          : String(parsed);
+      } catch {
+        // Not valid JSON – treat the raw value as the wallet name.
+        walletName = savedWallet;
       }
-    }
+
+      if (!walletName) return;
+
+      // Accept both 'Installed' (extension present) and 'Loadable' (can be
+      // injected lazily) so we don't miss wallets during early page load.
+      const savedAdapter = wallets.find(w => w.adapter.name === walletName);
+      if (
+        savedAdapter &&
+        (savedAdapter.readyState === 'Installed' || savedAdapter.readyState === 'Loadable')
+      ) {
+        reconnectAttempted.current = true;
+        console.log('[GhostSwap] Auto-reconnecting to:', walletName);
+        selectWallet(savedAdapter.adapter.name);
+        setTimeout(() => {
+          connect(network || Network.TESTNET).catch(e =>
+            console.log('[GhostSwap] Auto-connect failed:', e)
+          );
+        }, 100);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [connected, connecting, selectWallet, wallets, connect, network]);
 
   return <>{children}</>;
