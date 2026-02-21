@@ -20,7 +20,7 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo.png" alt="GhostSwap" width={36} height={36} className="rounded-xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={48} height={48} className="rounded-xl" />
               <span className="font-semibold text-lg text-white">GhostSwap</span>
             </Link>
 
@@ -43,9 +43,9 @@ export default function LandingPage() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.6 }}
-              className="mb-8"
+              className="mb-8 flex justify-center"
             >
-              <Image src="/logo.png" alt="GhostSwap" width={120} height={120} className="rounded-3xl shadow-2xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={160} height={160} className="rounded-3xl shadow-2xl" />
             </motion.div>
 
             {/* App Name */}
