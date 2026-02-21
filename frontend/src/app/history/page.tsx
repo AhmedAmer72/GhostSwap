@@ -1,8 +1,12 @@
 'use client';
 
 import React from 'react';
-import { Header, TradeHistory } from '@/components';
+import dynamic from 'next/dynamic';
 import { motion } from 'framer-motion';
+
+// Dynamic imports with SSR disabled
+const Header = dynamic(() => import('@/components/Header').then(mod => mod.Header), { ssr: false });
+const TradeHistory = dynamic(() => import('@/components/TradeHistory').then(mod => mod.TradeHistory), { ssr: false });
 
 export default function HistoryPage() {
   return (

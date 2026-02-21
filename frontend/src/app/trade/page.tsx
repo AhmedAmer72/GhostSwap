@@ -1,11 +1,14 @@
 'use client';
 
 import React from 'react';
-import { Header } from '@/components/Header';
-import { TradeCreator } from '@/components/TradeCreator';
-import { TokenBalances } from '@/components/TokenBalances';
-import { TradeHistory } from '@/components/TradeHistory';
+import dynamic from 'next/dynamic';
 import { motion } from 'framer-motion';
+
+// Dynamic imports with SSR disabled
+const Header = dynamic(() => import('@/components/Header').then(mod => mod.Header), { ssr: false });
+const TradeCreator = dynamic(() => import('@/components/TradeCreator').then(mod => mod.TradeCreator), { ssr: false });
+const TokenBalances = dynamic(() => import('@/components/TokenBalances').then(mod => mod.TokenBalances), { ssr: false });
+const TradeHistory = dynamic(() => import('@/components/TradeHistory').then(mod => mod.TradeHistory), { ssr: false });
 
 export default function TradePage() {
   return (

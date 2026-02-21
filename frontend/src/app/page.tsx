@@ -5,7 +5,13 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
-import { WalletButton } from '@/components/WalletButton';
+import dynamic from 'next/dynamic';
+
+// Dynamic import with SSR disabled for wallet component
+const WalletButton = dynamic(
+  () => import('@/components/WalletButton').then(mod => mod.WalletButton),
+  { ssr: false }
+);
 
 export default function LandingPage() {
   return (
