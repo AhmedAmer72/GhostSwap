@@ -31,6 +31,7 @@ export function AleoWalletProvider({ children }: WalletProviderProps) {
       programs={[PROGRAM_ID, 'credits.aleo']}
       network={Network.TESTNET}
       autoConnect
+      localStorageKey="ghostswap-wallet"
     >
       <WalletModalProvider>{children}</WalletModalProvider>
     </ProvableWalletProvider>

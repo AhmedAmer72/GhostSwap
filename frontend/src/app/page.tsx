@@ -31,7 +31,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero - Centered */}
-      <section className="flex-1 flex items-center justify-center relative z-10">
+      <section className="flex-1 flex items-center justify-center relative z-10 pt-32">
         <div className="max-w-4xl mx-auto px-6 text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -45,7 +45,7 @@ export default function LandingPage() {
               transition={{ duration: 0.6 }}
               className="mb-8 flex justify-center"
             >
-              <Image src="/logo.png" alt="GhostSwap" width={320} height={320} className="rounded-3xl shadow-2xl" />
+              <Image src="/logo.png" alt="GhostSwap" width={200} height={200} className="rounded-3xl shadow-2xl" />
             </motion.div>
 
             {/* App Name */}
