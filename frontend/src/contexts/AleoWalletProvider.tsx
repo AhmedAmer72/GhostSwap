@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useMemo, createContext, useContext } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { AleoWalletProvider as ProvableWalletProvider, useWallet, WalletContext as ProvableWalletContext } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletModalProvider } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
@@ -32,8 +32,8 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
   const reconnectAttempted = useRef(false);
 
   useEffect(() => {
-    // Reset the flag whenever we gain a connection so that a future
-    // disconnect (e.g. brief drop during navigation) can trigger a fresh attempt.
+    // Reset the guard whenever we gain a connection so a future drop can
+    // trigger a fresh attempt.
     if (connected) {
       reconnectAttempted.current = false;
       return;
@@ -45,10 +45,9 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
     const savedWallet = localStorage.getItem(STORAGE_KEY);
     if (!savedWallet) return;
 
-    // Give the library's own autoConnect a head-start (500 ms) so the two
-    // mechanisms don't race against each other.
-    const timer = setTimeout(() => {
-      // Re-check state after the delay – library may have reconnected by now.
+    // Try immediately; also schedule a fallback 300 ms later in case the
+    // wallet adapter hasn't finished injecting yet.
+    const attempt = () => {
       if (reconnectAttempted.current || connected) return;
 
       // Parse the stored wallet name – the library may store it as a plain
@@ -60,18 +59,16 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
           ? parsed.walletName ?? parsed.name ?? String(parsed)
           : String(parsed);
       } catch {
-        // Not valid JSON – treat the raw value as the wallet name.
         walletName = savedWallet;
       }
 
       if (!walletName) return;
 
-      // Accept both 'Installed' (extension present) and 'Loadable' (can be
-      // injected lazily) so we don't miss wallets during early page load.
+      // Accept 'Installed' and 'Loadable' so lazily-injected wallets aren't skipped.
       const savedAdapter = wallets.find(w => w.adapter.name === walletName);
       if (
         savedAdapter &&
-        (savedAdapter.readyState === 'Installed' || savedAdapter.readyState === 'Loadable')
+        (savedAdapter.readyState === 'Installed' || savedAdapter.readyState === 'Loadable' || savedAdapter.readyState === 'NotDetected')
       ) {
         reconnectAttempted.current = true;
         console.log('[GhostSwap] Auto-reconnecting to:', walletName);
@@ -80,11 +77,15 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
           connect(network || Network.TESTNET).catch(e =>
             console.log('[GhostSwap] Auto-connect failed:', e)
           );
-        }, 100);
+        }, 50);
       }
-    }, 500);
+    };
 
-    return () => clearTimeout(timer);
+    // Immediate attempt
+    attempt();
+    // Fallback attempt after 300 ms for slower wallet injections
+    const fallback = setTimeout(attempt, 300);
+    return () => clearTimeout(fallback);
   }, [connected, connecting, selectWallet, wallets, connect, network]);
 
   return <>{children}</>;
@@ -117,17 +118,8 @@ function ClientWalletProvider({ children }: WalletProviderProps) {
 }
 
 export function AleoWalletProvider({ children }: WalletProviderProps) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // During SSR or before mount, render children without wallet context
-  // This allows the page to render, then wallet loads on client
-  if (!mounted) {
-    return <>{children}</>;
-  }
-
+  // Always render ClientWalletProvider so the wallet context is never
+  // conditionally absent. getWallets() already returns [] during SSR,
+  // so the adapter list is empty on the server and hydrates correctly.
   return <ClientWalletProvider>{children}</ClientWalletProvider>;
 }
