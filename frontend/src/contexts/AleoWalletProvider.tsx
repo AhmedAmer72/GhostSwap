@@ -51,6 +51,7 @@ function SessionGuard({ children }: { children: React.ReactNode }) {
     restoring.current = false;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
       const parsed = JSON.parse(raw);
       const name = typeof parsed === 'string'
         ? parsed
