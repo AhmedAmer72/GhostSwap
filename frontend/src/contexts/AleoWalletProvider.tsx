@@ -33,39 +33,45 @@ function getWallets() {
 // Auto-reconnect component that runs inside the wallet context.
 //
 // ROOT CAUSE of the disconnect-on-navigation bug:
-//   The Shield Wallet adapter fires a 'disconnect' event on URL change.
-//   The library's handleDisconnect() calls setName(null), which wipes
-//   STORAGE_KEY from localStorage.  Our previous reconnect code read from
-//   STORAGE_KEY — so after the library cleared it, reconnect found nothing
-//   and silently gave up.
+//   Shield Wallet fires a native 'disconnect' event on every URL change.
+//   The library's handleDisconnect() calls setName(null) which wipes
+//   STORAGE_KEY from localStorage.  Our reconnect code was reading from
+//   STORAGE_KEY — by the time it ran, the library had already cleared it.
 //
-// FIX: persist the wallet name under WALLET_NAME_KEY (our own key). That key
-// is never touched by the library. On every disconnect we restore STORAGE_KEY
-// from the backup and call selectWallet + connect.
+// FIX:
+//   1. Back up the wallet name to WALLET_NAME_KEY (our own key the library
+//      never touches) whenever we are connected.
+//   2. On disconnect, restore STORAGE_KEY from the backup and call
+//      selectWallet() ONLY — do NOT call connect() explicitly.
+//      selectWallet() = setName() inside the library; it restores the adapter
+//      and triggers the library's own autoConnect effect which calls
+//      adapter.connect() silently (no popup for already-authorised dApps).
+//      Calling connect() on top of autoConnect was what opened the popup.
 function WalletAutoConnect({ children }: { children: React.ReactNode }) {
-  const { connected, connecting, selectWallet, wallets, connect, network } = useWallet();
+  const { connected, connecting, selectWallet, wallets } = useWallet();
   const reconnectAttempted = useRef(false);
 
   useEffect(() => {
     if (connected) {
-      // We are connected — save the wallet name to our backup key.
-      // The library stores the name in STORAGE_KEY as JSON.stringify(name).
+      // Back up the wallet name under our own key.
+      // The library stores it in STORAGE_KEY as JSON.stringify(walletName).
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          const name = typeof parsed === 'string' ? parsed : (parsed?.walletName ?? parsed?.name ?? null);
+          const name = typeof parsed === 'string'
+            ? parsed
+            : (parsed?.walletName ?? parsed?.name ?? null);
           if (name) localStorage.setItem(WALLET_NAME_KEY, name);
         }
       } catch {/* ignore */}
-      // Reset guard so a future disconnect triggers a fresh attempt.
       reconnectAttempted.current = false;
       return;
     }
 
     if (reconnectAttempted.current || connecting) return;
 
-    // Read the wallet name from OUR backup key (never cleared by the library).
+    // Read from our backup key — intact even after the library wiped STORAGE_KEY.
     const walletName = localStorage.getItem(WALLET_NAME_KEY);
     if (!walletName) return;
 
@@ -78,25 +84,21 @@ function WalletAutoConnect({ children }: { children: React.ReactNode }) {
         (savedAdapter.readyState === 'Installed' || savedAdapter.readyState === 'Loadable')
       ) {
         reconnectAttempted.current = true;
-        // Restore the library's own key so its internal autoConnect logic
-        // also sees the wallet name on subsequent renders.
+        // Restore library's key first so its autoConnect effect sees the name.
         localStorage.setItem(STORAGE_KEY, JSON.stringify(walletName));
-        console.log('[GhostSwap] Auto-reconnecting to:', walletName);
+        console.log('[GhostSwap] Restoring wallet session:', walletName);
+        // selectWallet() updates library state → adapter changes →
+        // library's autoConnect effect fires → adapter.connect() (silent,
+        // no popup for already-authorised apps).
         selectWallet(savedAdapter.adapter.name);
-        setTimeout(() => {
-          connect(network || Network.TESTNET).catch(e =>
-            console.log('[GhostSwap] Auto-connect failed:', e)
-          );
-        }, 50);
+        // Do NOT call connect() here — autoConnect handles it.
       }
     };
 
-    // Immediate attempt
     attempt();
-    // Fallback for slower wallet injections
     const fallback = setTimeout(attempt, 300);
     return () => clearTimeout(fallback);
-  }, [connected, connecting, selectWallet, wallets, connect, network]);
+  }, [connected, connecting, selectWallet, wallets]);
 
   return <>{children}</>;
 }
