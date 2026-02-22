@@ -1,4 +1,3 @@
-import CryptoJS from 'crypto-js';
 import { nanoid } from 'nanoid';
 import { TradeOrder, Token } from './store';
 
@@ -6,10 +5,12 @@ import { TradeOrder, Token } from './store';
 const ENCRYPTION_VERSION = '1';
 const LINK_PREFIX = 'ghost';
 
-// Encode trade data for shareable link
+// Encode trade data for shareable link.
+// Uses URL-safe base64 JSON — no encryption needed since the link's
+// randomness (orderId + nonce) already acts as an unguessable capability URL.
 export function encodeTradeLink(order: TradeOrder): string {
   const payload = {
-    v: ENCRYPTION_VERSION,
+    v: '2',
     oid: order.orderId,
     ma: order.makerAddress,
     mt: order.makerToken.id,
@@ -20,65 +21,43 @@ export function encodeTradeLink(order: TradeOrder): string {
     exp: order.expiresAt,
     ts: order.createdAt,
   };
-
-  // Encrypt the payload
-  const jsonStr = JSON.stringify(payload);
-  const encrypted = CryptoJS.AES.encrypt(jsonStr, order.nonce).toString();
-  
-  // URL-safe base64
-  const urlSafe = encrypted
+  const b64 = btoa(JSON.stringify(payload))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
-
-  return `${LINK_PREFIX}_${order.nonce.slice(0, 8)}_${urlSafe}`;
+  return `${LINK_PREFIX}_v2_${b64}`;
 }
 
 // Decode trade data from shareable link
 export function decodeTradeLink(linkData: string, tokens: Token[]): TradeOrder | null {
   try {
-    // Parse the link format: ghost_{nonce_prefix}_{encrypted_data}
     const parts = linkData.split('_');
-    if (parts.length < 3 || parts[0] !== LINK_PREFIX) {
-      throw new Error('Invalid link format');
+    if (parts[0] !== LINK_PREFIX) throw new Error('Invalid link prefix');
+
+    let payload: Record<string, unknown>;
+    if (parts[1] === 'v2') {
+      // v2: URL-safe base64 JSON
+      const b64 = parts.slice(2).join('_').replace(/-/g, '+').replace(/_/g, '/');
+      const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+      payload = JSON.parse(atob(padded));
+    } else {
+      throw new Error('Unrecognised link format — please ask the sender to generate a new link.');
     }
 
-    const noncePrefix = parts[1];
-    const encrypted = parts.slice(2).join('_')
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
-
-    // We need to try decrypting with possible nonces
-    // In production, the full nonce would be derivable or stored
-    // For demo, we'll include a hint in the URL
-
-    // Try to decrypt (simplified for demo)
-    const decrypted = CryptoJS.AES.decrypt(encrypted, noncePrefix + 'x'.repeat(56 - noncePrefix.length));
-    const jsonStr = decrypted.toString(CryptoJS.enc.Utf8);
-    
-    if (!jsonStr) {
-      throw new Error('Decryption failed');
-    }
-
-    const payload = JSON.parse(jsonStr);
-    
     const makerToken = tokens.find(t => t.id === payload.mt);
     const takerToken = tokens.find(t => t.id === payload.tt);
-
-    if (!makerToken || !takerToken) {
-      throw new Error('Unknown token in trade');
-    }
+    if (!makerToken || !takerToken) throw new Error('Unknown token in trade');
 
     return {
-      orderId: payload.oid,
-      makerAddress: payload.ma,
+      orderId: payload.oid as string,
+      makerAddress: payload.ma as string,
       makerToken,
-      makerAmount: payload.mam,
+      makerAmount: payload.mam as string,
       takerToken,
-      takerAmount: payload.tam,
-      nonce: payload.n,
-      expiresAt: payload.exp,
-      createdAt: payload.ts,
+      takerAmount: payload.tam as string,
+      nonce: payload.n as string,
+      expiresAt: payload.exp as number,
+      createdAt: payload.ts as number,
       status: 'pending',
     };
   } catch (error) {

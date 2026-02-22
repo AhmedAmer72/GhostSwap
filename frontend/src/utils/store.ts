@@ -115,13 +115,7 @@ const initialState = {
   connected: false,
   address: null,
   publicKey: null,
-  balances: {
-    credits: '10000000000', // 10,000 ALEO
-    usdcx: '50000000000',   // 50,000 USDCx
-    usad: '25000000000',    // 25,000 USAD
-    weth: '5000000000000000000', // 5 wETH
-    wbtc: '100000000',      // 1 wBTC
-  },
+  balances: {} as Record<string, string>, // populated from on-chain records via useTokenBalances
   myOrders: [],
   transactions: [],
   isLoading: false,

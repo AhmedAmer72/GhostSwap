@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletMultiButton } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { TradeOrder, Token, TOKENS, useAppStore, formatTokenAmount, parseTokenAmount } from '@/utils/store';
-import { extractLinkData, validateTradeOrder, shortenAddress, getTimeRemaining } from '@/utils/crypto';
+import { extractLinkData, decodeTradeLink, validateTradeOrder, shortenAddress, getTimeRemaining } from '@/utils/crypto';
+import { useAleoTrade } from '@/hooks/useAleoTrade';
 import { TokenIcon } from './TokenSelector';
 import {
   ArrowRight,
@@ -29,6 +30,7 @@ interface ClaimTradeProps {
 export function ClaimTrade({ linkData }: ClaimTradeProps) {
   const { connected: isConnected, address } = useWallet();
   const { balances, setLoading, isLoading } = useAppStore();
+  const { executeTrade, isProcessing } = useAleoTrade();
 
   const [inputLink, setInputLink] = useState('');
   const [trade, setTrade] = useState<TradeOrder | null>(null);
@@ -47,34 +49,25 @@ export function ClaimTrade({ linkData }: ClaimTradeProps) {
     setError(null);
 
     try {
-      // Simulate decryption delay
-      await new Promise((r) => setTimeout(r, 1500));
+      // Small delay so the loading animation is visible
+      await new Promise((r) => setTimeout(r, 600));
 
-      // For demo, create a mock trade order from the link
-      // In production, this would actually decrypt the link
-      const mockTrade: TradeOrder = {
-        orderId: 'order_demo_' + Date.now(),
-        makerAddress: 'aleo1xxx...demo',
-        makerToken: TOKENS[0], // ALEO
-        makerAmount: '5000000000', // 5000 ALEO
-        takerToken: TOKENS[1], // USDCx
-        takerAmount: '2500000000', // 2500 USDCx
-        nonce: 'demo_nonce_' + Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-        createdAt: Date.now() - 60 * 60 * 1000,
-        status: 'pending',
-      };
+      // Decode the link using the real crypto module
+      const decoded = decodeTradeLink(data, TOKENS);
+      if (!decoded) {
+        throw new Error('Failed to decode link — the link may be invalid or corrupted.');
+      }
 
-      const validation = validateTradeOrder(mockTrade);
+      const validation = validateTradeOrder(decoded);
       if (!validation.valid) {
         throw new Error(validation.error);
       }
 
-      setTrade(mockTrade);
+      setTrade(decoded);
       setStatus('decrypted');
     } catch (err: any) {
-      console.error('Failed to decrypt link:', err);
-      setError(err.message || 'Failed to decrypt trade link');
+      console.error('Failed to decode link:', err);
+      setError(err.message || 'Failed to decode trade link');
       setStatus('error');
     }
   };
@@ -99,15 +92,12 @@ export function ClaimTrade({ linkData }: ClaimTradeProps) {
     setError(null);
 
     try {
-      // Check balance
-      const balance = balances[trade.takerToken.id] || '0';
-      if (BigInt(trade.takerAmount) > BigInt(balance)) {
-        throw new Error(`Insufficient ${trade.takerToken.symbol} balance`);
-      }
+      const takerAmountBase = parseTokenAmount(
+        formatTokenAmount(trade.takerAmount, trade.takerToken.decimals),
+        trade.takerToken.decimals
+      );
 
-      // Simulate transaction
-      await new Promise((r) => setTimeout(r, 2500));
-
+      await executeTrade(trade, trade.takerToken, takerAmountBase);
       setStatus('success');
     } catch (err: any) {
       console.error('Failed to execute swap:', err);

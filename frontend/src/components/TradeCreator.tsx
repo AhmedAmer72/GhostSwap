@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { Token, TOKENS, useAppStore, parseTokenAmount, formatTokenAmount } from '@/utils/store';
-import { generateTradeOrder, createShareableUrl, validateTradeOrder } from '@/utils/crypto';
+import { validateTradeOrder } from '@/utils/crypto';
+import { useAleoTrade } from '@/hooks/useAleoTrade';
 import { TokenSelector, TokenAmountInput } from './TokenSelector';
 import { ShareableLink } from './ShareableLink';
 import { 
@@ -21,7 +22,9 @@ import {
 
 export function TradeCreator() {
   const { connected: isConnected, address } = useWallet();
-  const { balances, addOrder, setLoading, isLoading } = useAppStore();
+  const { balances } = useAppStore();
+  const { createTrade, isProcessing } = useAleoTrade();
+  const isLoading = isProcessing;
 
   // Form state
   const [offerToken, setOfferToken] = useState<Token | null>(null);
@@ -57,50 +60,26 @@ export function TradeCreator() {
     if (!isFormValid() || !address || !offerToken || !requestToken) return;
 
     setError(null);
-    setLoading(true);
 
     try {
-      // Convert amounts to base units
-      const makerAmount = parseTokenAmount(offerAmount, offerToken.decimals);
-      const takerAmount = parseTokenAmount(requestAmount, requestToken.decimals);
+      // Convert to base units
+      const makerAmountBase = parseTokenAmount(offerAmount, offerToken.decimals);
+      const takerAmountBase = parseTokenAmount(requestAmount, requestToken.decimals);
 
-      // Check balance
-      const balance = balances[offerToken.id] || '0';
-      if (BigInt(makerAmount) > BigInt(balance)) {
-        throw new Error(`Insufficient ${offerToken.symbol} balance`);
-      }
-
-      // Generate the order
-      const order = generateTradeOrder(
-        address,
+      // createTrade calls create_order on-chain and returns the shareable URL
+      const shareUrl = await createTrade(
         offerToken,
-        makerAmount,
+        makerAmountBase,
         requestToken,
-        takerAmount,
+        takerAmountBase,
         expiresIn
       );
 
-      // Validate
-      const validation = validateTradeOrder(order);
-      if (!validation.valid) {
-        throw new Error(validation.error);
-      }
-
-      // Generate shareable URL
-      const shareUrl = createShareableUrl(order);
-
-      // Save order locally
-      addOrder(order);
-
-      // Update state
       setGeneratedLink(shareUrl);
       setStep('generated');
-
     } catch (err: any) {
       console.error('Failed to create trade:', err);
       setError(err.message || 'Failed to create trade');
-    } finally {
-      setLoading(false);
     }
   };
 
