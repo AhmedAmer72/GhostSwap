@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AleoWalletProvider as ProvableWalletProvider, useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { WalletModalProvider } from '@provablehq/aleo-wallet-adaptor-react-ui';
 import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
@@ -15,30 +14,52 @@ const STORAGE_KEY = 'ghostswap-wallet';
 export const WALLET_NAME_KEY = 'ghostswap-wallet-name';
 
 // ---------------------------------------------------------------------------
-// THE FIX
+// CORE FIX: patch history.pushState / replaceState at module-load time.
 //
-// Shield Wallet fires a 'disconnect' event on every client-side navigation.
-// Every previous approach tried to *react* to that disconnect (cooldowns,
-// selectWallet calls, etc.) and all of them eventually called adapter.connect()
-// which made Shield show the "CONNECT TO THIS SITE?" popup.
+// Shield Wallet fires a 'disconnect' event on every client-side URL change.
+// The library responds to that event by wiping its state and showing the
+// "CONNECT TO THIS SITE?" popup.
 //
-// The correct fix: intercept Shield's 'disconnect' event at the adapter level
-// and DROP it during a short window after navigation. The library never sees
-// the disconnect -> never wipes state -> never calls connect() -> no popup.
+// We must set _suppressDisconnect = true SYNCHRONOUSLY at the moment
+// history.pushState is called — which is what Next.js router calls when
+// navigating. This is before any React re-render and before Shield can
+// emit anything, so the patched adapter.emit() below drops the event
+// before the library ever sees it.
+//
+// Using usePathname() was too late: its useEffect runs after the render
+// that follows navigation, by which point Shield had already fired.
 // ---------------------------------------------------------------------------
-
-// Module-level flag read by the patched adapter emit().
 let _suppressDisconnect = false;
 let _suppressTimer: ReturnType<typeof setTimeout> | null = null;
 
-function startNavigationWindow() {
+function openSuppressionWindow() {
   _suppressDisconnect = true;
   if (_suppressTimer) clearTimeout(_suppressTimer);
-  // 600 ms is enough for Shield to fire and finish its disconnect event.
-  _suppressTimer = setTimeout(() => { _suppressDisconnect = false; }, 600);
+  _suppressTimer = setTimeout(() => { _suppressDisconnect = false; }, 800);
 }
 
+// Run once on the client when this module is first imported.
+if (typeof window !== 'undefined') {
+  const origPush = history.pushState.bind(history);
+  history.pushState = (...args: Parameters<typeof history.pushState>) => {
+    openSuppressionWindow();
+    return origPush(...args);
+  };
+
+  const origReplace = history.replaceState.bind(history);
+  history.replaceState = (...args: Parameters<typeof history.replaceState>) => {
+    openSuppressionWindow();
+    return origReplace(...args);
+  };
+
+  // Back/forward browser buttons
+  window.addEventListener('popstate', openSuppressionWindow);
+}
+
+// ---------------------------------------------------------------------------
 // Wallet adapter singletons — created once, patched once.
+// The emit() patch drops 'disconnect' while _suppressDisconnect is true.
+// ---------------------------------------------------------------------------
 let walletsInstance: (ShieldWalletAdapter | LeoWalletAdapter)[] | null = null;
 
 function getWallets() {
@@ -49,14 +70,13 @@ function getWallets() {
       new LeoWalletAdapter({ appName: 'GhostSwap' }),
     ];
 
-    // Patch each adapter: swallow 'disconnect' events while _suppressDisconnect is true.
     for (const adapter of adapters) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const orig = (adapter as any).emit.bind(adapter);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (adapter as any).emit = (event: string, ...args: unknown[]) => {
         if (event === 'disconnect' && _suppressDisconnect) {
-          console.log('[GhostSwap] Navigation detected — dropping wallet disconnect event');
+          console.log('[GhostSwap] Dropped disconnect event during navigation');
           return false;
         }
         return orig(event, ...args);
@@ -68,24 +88,11 @@ function getWallets() {
   return walletsInstance;
 }
 
-// NavigationGuard — runs inside React tree to access usePathname.
-// Calls startNavigationWindow() on every path change so the suppress
-// window is open before Shield fires its disconnect event.
-function NavigationGuard() {
-  const pathname = usePathname();
-  const prev = useRef(pathname);
-
-  useEffect(() => {
-    if (pathname === prev.current) return;
-    prev.current = pathname;
-    startNavigationWindow();
-  }, [pathname]);
-
-  return null;
-}
-
-// SessionBackup — saves wallet name to our own key whenever connected.
-// This survives if the library ever wipes its own key on a real disconnect.
+// ---------------------------------------------------------------------------
+// SessionBackup — keeps our own copy of the connected wallet name.
+// The library may wipe STORAGE_KEY on a real disconnect; WALLET_NAME_KEY
+// is only ever written (never deleted) by us.
+// ---------------------------------------------------------------------------
 function SessionBackup({ children }: { children: React.ReactNode }) {
   const { connected } = useWallet();
 
@@ -99,12 +106,15 @@ function SessionBackup({ children }: { children: React.ReactNode }) {
         ? parsed
         : (parsed?.walletName ?? parsed?.name ?? null);
       if (name) localStorage.setItem(WALLET_NAME_KEY, name);
-    } catch {}
+    } catch {/* ignore */}
   }, [connected]);
 
   return <>{children}</>;
 }
 
+// ---------------------------------------------------------------------------
+// Providers
+// ---------------------------------------------------------------------------
 interface WalletProviderProps {
   children: React.ReactNode;
 }
@@ -122,7 +132,6 @@ function ClientWalletProvider({ children }: WalletProviderProps) {
       localStorageKey={STORAGE_KEY}
     >
       <WalletModalProvider>
-        <NavigationGuard />
         <SessionBackup>
           {children}
         </SessionBackup>

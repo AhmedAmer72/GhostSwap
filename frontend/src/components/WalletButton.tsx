@@ -22,11 +22,20 @@ export function WalletButton() {
   const { address, disconnect, connected, connecting } = useWallet();
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
+  // After 4 s of being unconnected we give up on the cached session and show
+  // the real "Connect Wallet" button so the user is never stuck spinning.
+  const [sessionTimedOut, setSessionTimedOut] = useState(false);
 
-  // Read the cached address directly from localStorage (written by SessionGuard).
-  // This is the single source of truth — no separate state to get out of sync.
   const hasCachedSession = typeof window !== 'undefined'
     && !!localStorage.getItem(WALLET_NAME_KEY);
+
+  useEffect(() => {
+    if (connected) { setSessionTimedOut(false); return; }
+    if (!hasCachedSession) return;
+    const t = setTimeout(() => setSessionTimedOut(true), 4000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
 
   const handleCopy = async () => {
     if (address) {
@@ -50,7 +59,8 @@ export function WalletButton() {
 
   // State 2: adapter is (re)connecting and we know there's a saved session.
   // Show a ghost pill instead of reverting to "Connect Wallet".
-  if (!connected && (connecting || hasCachedSession) && !address) {
+  // Stop after 4 s so the user is never permanently stuck on the spinner.
+  if (!connected && !sessionTimedOut && (connecting || hasCachedSession) && !address) {
     return (
       <div className="glass flex items-center gap-3 px-4 py-2.5 rounded-xl border border-white/10">
         <div className="relative w-8 h-8">
