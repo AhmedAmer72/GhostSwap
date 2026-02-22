@@ -95,24 +95,28 @@ export function ClaimTrade({ linkData }: ClaimTradeProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ---- Step 3: Check for ClaimTicket --------------------------------------
+  // ---- Step 3: Check for ClaimTicket -------------------------------------
   const handleCheckTicket = useCallback(async () => {
     if (!trade || !requestRecords) return;
     setStep('ticket-check');
     setError(null);
     try {
-      const records: any[] = await requestRecords(PROGRAM_ID);
-      // Find a ClaimTicket whose order_id matches this trade
-      const ticket = records?.find((r: any) => {
-        const oid: string = r?.order_id ?? r?.data?.order_id ?? '';
-        const normalise = (s: string) => s.replace('field','').trim();
-        return normalise(oid) === normalise(trade.orderId);
-      }) ?? null;
+      // includePlaintext=true so we get the record plaintext for execute_swap
+      const records: any[] = await requestRecords(PROGRAM_ID, true);
+      const norm = (s: string) => (s ?? '').replace(/field$/, '').trim();
+      const recOid = (r: any): string => r?.data?.order_id ?? r?.order_id ?? '';
+      const recTypeName = (r: any): string =>
+        (r?.record_name ?? r?.type ?? r?.name ?? '').toLowerCase();
+      const ticket = records?.find((r: any) =>
+        norm(recOid(r)) === norm(trade.orderId) && recTypeName(r) === 'claimticket'
+      ) ?? null;
       if (ticket) {
         setClaimTicket(ticket);
         setStep('ready');
       } else {
-        setError('Ticket not found yet. Ask Alice to issue it, then try again.');
+        setError(
+          'Ticket not found yet. Make sure Alice clicked "Issue Ticket" and the transaction confirmed, then try again.'
+        );
         setStep('awaiting');
       }
     } catch (e: any) {

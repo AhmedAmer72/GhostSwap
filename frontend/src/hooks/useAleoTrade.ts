@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
-import { TradeOrder, Token, useAppStore } from '@/utils/store';
+import { TradeOrder, Token, useAppStore, formatTokenAmount } from '@/utils/store';
 import { PROGRAM_ID, toAleoField, toAleoU128 } from '@/utils/aleo';
 import { generateTradeOrder, createShareableUrl } from '@/utils/crypto';
 
@@ -15,7 +15,20 @@ function normalizeField(val: string | undefined | null): string {
 
 /** Get a uint128 value from an Aleo record data field */
 function parseU128(val: string | undefined | null): bigint {
-  return BigInt((val ?? '0').replace(/u128$/, '').trim());
+  try { return BigInt((val ?? '0').replace(/u128$/, '').replace(/field$/, '').trim()); } catch { return 0n; }
+}
+
+/**
+ * Get a field from a record in a wallet-agnostic way.
+ * Shield wallet wraps fields under `data`, some adapters flatten them.
+ */
+function recField(record: any, field: string): string | undefined {
+  return record?.data?.[field] ?? record?.[field];
+}
+
+/** Check record type against both `record_name`, `type`, and `name` properties */
+function recType(record: any): string {
+  return (record?.record_name ?? record?.type ?? record?.name ?? '').toLowerCase();
 }
 
 /** Generate a random Aleo-safe field value (fits in the BLS12-377 scalar field) */
@@ -118,14 +131,16 @@ export function useAleoTrade(): UseAleoTradeReturn {
         // 1. Fetch GhostToken records from wallet
         const records = await walletRecords(requestRecords!);
         const tokenRecord = records.find((r: any) => {
-          const matchId = normalizeField(r?.data?.token_id) === normalizeField(offerToken.tokenId);
-          const hasAmount = parseU128(r?.data?.amount) >= BigInt(offerAmount);
+          const matchId = normalizeField(recField(r, 'token_id')) === normalizeField(offerToken.tokenId);
+          const hasAmount = parseU128(recField(r, 'amount')) >= BigInt(offerAmount);
           return matchId && hasAmount;
         });
 
         if (!tokenRecord) {
+          const displayAmt = formatTokenAmount(offerAmount, offerToken.decimals);
           throw new Error(
-            `No ${offerToken.symbol} record found in your wallet with at least ${offerAmount} units. Mint test tokens first.`
+            `No ${offerToken.symbol} record found in your wallet with at least ${displayAmt} ${offerToken.symbol}. ` +
+            `Click "Mint Test Tokens" in the balances panel to get test tokens first.`
           );
         }
 
@@ -201,9 +216,9 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         // a) ClaimTicket for this order
         const ticketRecord = records.find((r: any) => {
-          const rid = normalizeField(r?.data?.order_id);
+          const rid = normalizeField(recField(r, 'order_id'));
           const oid = normalizeField(order.orderId);
-          return rid === oid && (r?.record_name === 'ClaimTicket' || r?.type === 'ClaimTicket');
+          return rid === oid && recType(r) === 'claimticket';
         });
 
         if (!ticketRecord) throw new Error("ClaimTicket not found in wallet. Ask Alice to issue your ticket first.");
@@ -213,12 +228,15 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         // b) Taker's GhostToken payment
         const payRecord = records.find((r: any) => {
-          const matchId = normalizeField(r?.data?.token_id) === normalizeField(takerToken.tokenId);
-          const hasAmount = parseU128(r?.data?.amount) >= BigInt(takerAmount);
+          const matchId = normalizeField(recField(r, 'token_id')) === normalizeField(takerToken.tokenId);
+          const hasAmount = parseU128(recField(r, 'amount')) >= BigInt(takerAmount);
           return matchId && hasAmount;
         });
 
-        if (!payRecord) throw new Error(`No ${takerToken.symbol} record with at least ${takerAmount} units in wallet`);
+        if (!payRecord) {
+          const displayAmt = formatTokenAmount(takerAmount, takerToken.decimals);
+          throw new Error(`No ${takerToken.symbol} record with at least ${displayAmt} ${takerToken.symbol} in your wallet`);
+        }
 
         const payInput = recordPlaintext(payRecord);
         if (!payInput) throw new Error("Could not read taker GhostToken plaintext");
@@ -287,12 +305,12 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         // Find TradeOrder record for this order
         const orderRecord = records.find((r: any) => {
-          const rid = normalizeField(r?.data?.order_id);
+          const rid = normalizeField(recField(r, 'order_id'));
           const oid = normalizeField(order.orderId);
-          return rid === oid && (r?.record_name === 'TradeOrder' || r?.type === 'TradeOrder');
+          return rid === oid && recType(r) === 'tradeorder';
         });
 
-        if (!orderRecord) throw new Error("TradeOrder record not found in wallet");
+        if (!orderRecord) throw new Error("TradeOrder record not found in wallet. Wait for the create_order transaction to confirm, then try again.");
 
         const orderInput = recordPlaintext(orderRecord);
         if (!orderInput) throw new Error("Could not read TradeOrder record plaintext");
@@ -341,12 +359,12 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         // Find Alice's TradeOrder record
         const orderRecord = records.find((r: any) => {
-          const rid = normalizeField(r?.data?.order_id);
+          const rid = normalizeField(recField(r, 'order_id'));
           const oid = normalizeField(order.orderId);
-          return rid === oid && (r?.record_name === 'TradeOrder' || r?.type === 'TradeOrder');
+          return rid === oid && recType(r) === 'tradeorder';
         });
 
-        if (!orderRecord) throw new Error("TradeOrder record not found in wallet. Make sure the create_order transaction has confirmed.");
+        if (!orderRecord) throw new Error("TradeOrder record not found in wallet. Make sure the create_order transaction has confirmed (check your wallet's transaction history).");
 
         const orderInput = recordPlaintext(orderRecord);
         if (!orderInput) throw new Error("Could not read TradeOrder record plaintext");
@@ -367,9 +385,9 @@ export function useAleoTrade(): UseAleoTradeReturn {
           await new Promise(r => setTimeout(r, 2000));
           const updatedRecords = await walletRecords(requestRecords!);
           const newOrderRecord = updatedRecords.find((r: any) => {
-            const rid = normalizeField(r?.data?.order_id);
+            const rid = normalizeField(recField(r, 'order_id'));
             const oid = normalizeField(order.orderId);
-            return rid === oid && (r?.record_name === 'TradeOrder' || r?.type === 'TradeOrder');
+            return rid === oid && recType(r) === 'tradeorder';
           });
           if (newOrderRecord && recordPlaintext(newOrderRecord)) {
             // Store the record plaintext on the order so the new link includes it
@@ -471,9 +489,10 @@ export function useTokenBalances() {
       const records = await requestRecords(PROGRAM_ID, true) as any[];
       const newBalances: Record<string, string> = {};
       for (const r of records ?? []) {
-        const rawId = r?.data?.token_id ?? '';
+        if (recType(r) !== '' && recType(r) !== 'ghosttoken') continue;
+        const rawId = recField(r, 'token_id') ?? '';
         const tokenId = normalizeField(rawId) + 'field';
-        const amt = parseU128(r?.data?.amount);
+        const amt = parseU128(recField(r, 'amount'));
         if (tokenId !== 'field') {
           newBalances[tokenId] = ((BigInt(newBalances[tokenId] ?? '0')) + amt).toString();
         }
