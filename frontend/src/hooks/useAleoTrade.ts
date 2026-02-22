@@ -1,131 +1,97 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { TradeOrder, Token, useAppStore } from '@/utils/store';
-import { PROGRAM_ID, toAleoField, toAleoU128 } from '@/utils/aleo';
+import { 
+  executeCreate, 
+  executeSwap, 
+  executeCancel,
+  executeMint,
+  getGhostTokenRecords,
+  GhostTokenRecord,
+  TradeOrderRecord,
+  PROGRAM_ID,
+  toAleoField,
+  toAleoU128
+} from '@/utils/aleo';
 import { generateTradeOrder, createShareableUrl } from '@/utils/crypto';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Generate a random Aleo field element for use as a nonce. */
-function randomField(): string {
-  const hi = BigInt(Date.now());
-  const lo = BigInt(Math.floor(Math.random() * 1_000_000_000));
-  return `${hi * 1_000_000_000n + lo}field`;
-}
-
-/** Find a GhostToken record matching tokenId in the user's records. */
-function findTokenRecord(records: unknown[], tokenId: string): unknown | null {
-  if (!records?.length) return null;
-  return records.find((r: any) => {
-    const id: string = r?.token_id ?? r?.data?.token_id ?? '';
-    return id.replace('field', '').trim() === tokenId.replace('field', '').trim();
-  }) ?? null;
-}
-
-/** Serialise a record (or object) to the string format the wallet expects. */
-function serializeRecord(record: unknown): string {
-  if (typeof record === 'string') return record;
-  return JSON.stringify(record);
-}
-
-// ---------------------------------------------------------------------------
-// useAleoTrade hook
-// ---------------------------------------------------------------------------
 interface UseAleoTradeReturn {
   createTrade: (
     offerToken: Token,
-    offerAmountBase: string,   // in base units (no decimals)
+    offerAmount: string,
     requestToken: Token,
-    requestAmountBase: string, // in base units (no decimals)
+    requestAmount: string,
     expiresInHours?: number
   ) => Promise<string>;
-  executeTrade: (order: TradeOrder, takerToken: Token, takerAmountBase: string) => Promise<string>;
+  executeTrade: (order: TradeOrder, takerToken: Token, takerAmount: string) => Promise<string>;
   cancelTrade: (order: TradeOrder) => Promise<string>;
-  mintTokens: (tokenId: string, amountBase: string) => Promise<string>;
+  mintTokens: (tokenId: string, amount: string) => Promise<string>;
+  generateTicket: (order: TradeOrder, takerAddress: string) => Promise<string>;
   isProcessing: boolean;
   error: string | null;
   clearError: () => void;
 }
 
 export function useAleoTrade(): UseAleoTradeReturn {
-  const { connected, address, executeTransaction, requestRecords } = useWallet() as any;
-  const { addOrder, updateOrderStatus, addTransaction } = useAppStore();
+  const { connected, address, executeTransaction } = useWallet();
+  const { addOrder, updateOrderStatus, addTransaction, setLoading } = useAppStore();
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const clearError = useCallback(() => setError(null), []);
 
-  // ---- create_order -------------------------------------------------------
   const createTrade = useCallback(
     async (
       offerToken: Token,
-      offerAmountBase: string,
+      offerAmount: string,
       requestToken: Token,
-      requestAmountBase: string,
-      expiresInHours = 24
+      requestAmount: string,
+      expiresInHours: number = 24
     ): Promise<string> => {
-      if (!connected || !address) throw new Error('Wallet not connected');
+      if (!connected || !address) {
+        throw new Error('Wallet not connected');
+      }
 
       setIsProcessing(true);
       setError(null);
 
       try {
-        const nonce = randomField();
-
-        // Build a local order first so we have something to link to.
+        // Generate order locally first
         const order = generateTradeOrder(
           address,
           offerToken,
-          offerAmountBase,
+          offerAmount,
           requestToken,
-          requestAmountBase,
+          requestAmount,
           expiresInHours
         );
-        order.nonce = nonce;
 
-        // Try to call create_order on-chain
+        // Execute on-chain create transition
         if (executeTransaction) {
           try {
-            // Attempt to fetch the user's GhostToken record for the offer token.
-            let tokenRecord: unknown = null;
-            if (requestRecords) {
-              try {
-                const records: unknown[] = await requestRecords(PROGRAM_ID);
-                tokenRecord = findTokenRecord(records, offerToken.tokenId);
-              } catch (e) {
-                console.warn('[GhostSwap] requestRecords failed:', e);
-              }
-            }
-
-            // Use the fetched record when available; otherwise construct an
-            // inline record literal that the wallet can match to a real record.
-            const tokenInput = tokenRecord
-              ? serializeRecord(tokenRecord)
-              : `{ owner: ${address}, token_id: ${offerToken.tokenId}, amount: ${offerAmountBase}u128 }`;
-
             const result = await executeTransaction({
               program: PROGRAM_ID,
-              function: 'create_order',
+              function: 'create',
               inputs: [
-                tokenInput,                            // token: GhostToken
-                requestToken.tokenId,                  // taker_token_id: field
-                `${requestAmountBase}u128`,            // taker_amount: u128
-                nonce,                                 // nonce: field
+                // GhostToken record - wallet will select from user's records
+                `{ owner: ${address}, token_id: ${toAleoField(offerToken.tokenId.replace('field', ''))}, amount: ${toAleoU128(offerAmount)} }`,
+                toAleoField(requestToken.tokenId.replace('field', '')),
+                toAleoU128(requestAmount),
               ],
-              fee: 500_000,
+              fee: 500000,
             });
-
             if (result?.transactionId) {
               order.orderId = result.transactionId;
             }
           } catch (txErr: any) {
-            console.warn('[GhostSwap] create_order tx failed, using local order:', txErr.message);
+            console.warn('On-chain transaction failed, using local order:', txErr.message);
           }
         }
 
+        // Add to local store
         addOrder(order);
+
+        // Add transaction record
         addTransaction({
           id: order.orderId,
           type: 'create_order',
@@ -134,68 +100,60 @@ export function useAleoTrade(): UseAleoTradeReturn {
           orderId: order.orderId,
         });
 
-        return createShareableUrl(order);
+        // Generate shareable URL
+        const shareUrl = createShareableUrl(order);
+
+        return shareUrl;
       } catch (err: any) {
-        const msg = err.message || 'Failed to create trade';
-        setError(msg);
-        throw new Error(msg);
+        const errorMsg = err.message || 'Failed to create trade';
+        setError(errorMsg);
+        throw new Error(errorMsg);
       } finally {
         setIsProcessing(false);
       }
     },
-    [connected, address, executeTransaction, requestRecords, addOrder, addTransaction]
+    [connected, address, executeTransaction, addOrder, addTransaction]
   );
 
-  // ---- execute_swap -------------------------------------------------------
-  // Contract: execute_swap(ticket: ClaimTicket, taker_token: GhostToken, order: TradeOrder)
   const executeTrade = useCallback(
-    async (order: TradeOrder, takerToken: Token, takerAmountBase: string): Promise<string> => {
-      if (!connected || !address) throw new Error('Wallet not connected');
+    async (order: TradeOrder, takerToken: Token, takerAmount: string): Promise<string> => {
+      if (!connected || !address) {
+        throw new Error('Wallet not connected');
+      }
 
       setIsProcessing(true);
       setError(null);
 
       try {
-        let txId = `tx_swap_${Date.now()}`;
+        let txId = `tx_${Date.now()}`;
 
+        // Execute on-chain swap transition
         if (executeTransaction) {
-          // Fetch taker's records for ClaimTicket + GhostToken
-          let claimTicket: unknown = null;
-          let takerRecord: unknown = null;
-          if (requestRecords) {
-            try {
-              const records: unknown[] = await requestRecords(PROGRAM_ID);
-              // Find ClaimTicket for this order
-              claimTicket = records?.find((r: any) => {
-                const orderId: string = r?.order_id ?? r?.data?.order_id ?? '';
-                return orderId.replace('field', '').trim() === order.orderId.replace('field', '').trim();
-              }) ?? null;
-              takerRecord = findTokenRecord(records, takerToken.tokenId);
-            } catch (e) {
-              console.warn('[GhostSwap] requestRecords failed:', e);
+          try {
+            const result = await executeTransaction({
+              program: PROGRAM_ID,
+              function: 'swap',
+              inputs: [
+                // TradeOrder record
+                `{ owner: ${order.makerAddress}, maker_token_id: ${toAleoField(order.makerToken.tokenId.replace('field', ''))}, maker_amount: ${toAleoU128(order.makerAmount)}, taker_token_id: ${toAleoField(order.takerToken.tokenId.replace('field', ''))}, taker_amount: ${toAleoU128(order.takerAmount)}, order_id: ${toAleoField(order.orderId)} }`,
+                // Payment GhostToken record
+                `{ owner: ${address}, token_id: ${toAleoField(takerToken.tokenId.replace('field', ''))}, amount: ${toAleoU128(takerAmount)} }`,
+              ],
+              fee: 750000,
+            });
+            if (result?.transactionId) {
+              txId = result.transactionId;
             }
+          } catch (txErr: any) {
+            console.warn('On-chain swap failed:', txErr.message);
+            throw txErr;
           }
-
-          const ticketInput = claimTicket
-            ? serializeRecord(claimTicket)
-            : `{ owner: ${address}, order_id: ${toAleoField(order.orderId)}, maker_address: ${order.makerAddress}, maker_token_id: ${order.makerToken.tokenId}, maker_amount: ${toAleoU128(order.makerAmount)}, taker_token_id: ${order.takerToken.tokenId}, taker_amount: ${toAleoU128(order.takerAmount)} }`;
-
-          const takerTokenInput = takerRecord
-            ? serializeRecord(takerRecord)
-            : `{ owner: ${address}, token_id: ${takerToken.tokenId}, amount: ${takerAmountBase}u128 }`;
-
-          const orderInput = `{ owner: ${order.makerAddress}, maker_token_id: ${order.makerToken.tokenId}, maker_amount: ${toAleoU128(order.makerAmount)}, taker_token_id: ${order.takerToken.tokenId}, taker_amount: ${toAleoU128(order.takerAmount)}, order_id: ${toAleoField(order.orderId)}, nonce: ${order.nonce || randomField()} }`;
-
-          const result = await executeTransaction({
-            program: PROGRAM_ID,
-            function: 'execute_swap',
-            inputs: [ticketInput, takerTokenInput, orderInput],
-            fee: 750_000,
-          });
-          if (result?.transactionId) txId = result.transactionId;
         }
 
+        // Update order status
         updateOrderStatus(order.orderId, 'fulfilled');
+
+        // Add transaction record
         addTransaction({
           id: txId,
           type: 'execute_swap',
@@ -206,20 +164,21 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         return txId;
       } catch (err: any) {
-        const msg = err.message || 'Failed to execute swap';
-        setError(msg);
-        throw new Error(msg);
+        const errorMsg = err.message || 'Failed to execute swap';
+        setError(errorMsg);
+        throw new Error(errorMsg);
       } finally {
         setIsProcessing(false);
       }
     },
-    [connected, address, executeTransaction, requestRecords, updateOrderStatus, addTransaction]
+    [connected, address, executeTransaction, updateOrderStatus, addTransaction]
   );
 
-  // ---- cancel_order -------------------------------------------------------
   const cancelTrade = useCallback(
     async (order: TradeOrder): Promise<string> => {
-      if (!connected || !address) throw new Error('Wallet not connected');
+      if (!connected || !address) {
+        throw new Error('Wallet not connected');
+      }
 
       setIsProcessing(true);
       setError(null);
@@ -227,32 +186,31 @@ export function useAleoTrade(): UseAleoTradeReturn {
       try {
         let txId = `tx_cancel_${Date.now()}`;
 
+        // Execute on-chain cancel transition
         if (executeTransaction) {
-          let orderRecord: unknown = null;
-          if (requestRecords) {
-            try {
-              const records: unknown[] = await requestRecords(PROGRAM_ID);
-              orderRecord = records?.find((r: any) => {
-                const oid: string = r?.order_id ?? r?.data?.order_id ?? '';
-                return oid.replace('field', '').trim() === order.orderId.replace('field', '').trim();
-              }) ?? null;
-            } catch (e) { /* ignore */ }
+          try {
+            const result = await executeTransaction({
+              program: PROGRAM_ID,
+              function: 'cancel',
+              inputs: [
+                // TradeOrder record
+                `{ owner: ${order.makerAddress}, maker_token_id: ${toAleoField(order.makerToken.tokenId.replace('field', ''))}, maker_amount: ${toAleoU128(order.makerAmount)}, taker_token_id: ${toAleoField(order.takerToken.tokenId.replace('field', ''))}, taker_amount: ${toAleoU128(order.takerAmount)}, order_id: ${toAleoField(order.orderId)} }`,
+              ],
+              fee: 300000,
+            });
+            if (result?.transactionId) {
+              txId = result.transactionId;
+            }
+          } catch (txErr: any) {
+            console.warn('On-chain cancel failed:', txErr.message);
+            throw txErr;
           }
-
-          const orderInput = orderRecord
-            ? serializeRecord(orderRecord)
-            : `{ owner: ${order.makerAddress}, maker_token_id: ${order.makerToken.tokenId}, maker_amount: ${toAleoU128(order.makerAmount)}, taker_token_id: ${order.takerToken.tokenId}, taker_amount: ${toAleoU128(order.takerAmount)}, order_id: ${toAleoField(order.orderId)}, nonce: ${order.nonce || randomField()} }`;
-
-          const result = await executeTransaction({
-            program: PROGRAM_ID,
-            function: 'cancel_order',
-            inputs: [orderInput],
-            fee: 300_000,
-          });
-          if (result?.transactionId) txId = result.transactionId;
         }
 
+        // Update order status
         updateOrderStatus(order.orderId, 'cancelled');
+
+        // Add transaction record
         addTransaction({
           id: txId,
           type: 'cancel_order',
@@ -263,20 +221,66 @@ export function useAleoTrade(): UseAleoTradeReturn {
 
         return txId;
       } catch (err: any) {
-        const msg = err.message || 'Failed to cancel order';
-        setError(msg);
-        throw new Error(msg);
+        const errorMsg = err.message || 'Failed to cancel order';
+        setError(errorMsg);
+        throw new Error(errorMsg);
       } finally {
         setIsProcessing(false);
       }
     },
-    [connected, address, executeTransaction, requestRecords, updateOrderStatus, addTransaction]
+    [connected, address, executeTransaction, updateOrderStatus, addTransaction]
   );
 
-  // ---- mint_tokens --------------------------------------------------------
-  const mintTokens = useCallback(
-    async (tokenId: string, amountBase: string): Promise<string> => {
+  const generateTicket = useCallback(
+    async (order: TradeOrder, takerAddress: string): Promise<string> => {
       if (!connected || !address) throw new Error('Wallet not connected');
+      setIsProcessing(true);
+      setError(null);
+      try {
+        let txId = `tx_ticket_${Date.now()}`;
+
+        // Build the order record literal
+        const orderRecord = `{owner:${address},token_id:${toAleoField(order.makerToken.tokenId.replace('field',''))},amount:${toAleoU128(order.makerAmount)}u128,taker_token_id:${toAleoField(order.takerToken.tokenId.replace('field',''))},taker_amount:${toAleoU128(order.takerAmount)}u128,nonce:${order.orderId},_nonce:0group}`;
+
+        if (executeTransaction) {
+          try {
+            const result = await executeTransaction({
+              program: PROGRAM_ID,
+              function: 'generate_ticket',
+              inputs: [orderRecord, takerAddress],
+              fee: 300000,
+            });
+            if (result?.transactionId) txId = result.transactionId;
+          } catch (txErr: any) {
+            console.warn('generate_ticket on-chain error:', txErr.message);
+            throw txErr;
+          }
+        }
+
+        addTransaction({
+          id: txId,
+          type: 'generate_ticket',
+          status: 'confirmed',
+          timestamp: Date.now(),
+          orderId: order.orderId,
+        });
+        return txId;
+      } catch (err: any) {
+        const errorMsg = err.message || 'Failed to generate ticket';
+        setError(errorMsg);
+        throw new Error(errorMsg);
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [connected, address, executeTransaction, addTransaction]
+  );
+
+  const mintTokens = useCallback(
+    async (tokenId: string, amount: string): Promise<string> => {
+      if (!connected || !address) {
+        throw new Error('Wallet not connected');
+      }
 
       setIsProcessing(true);
       setError(null);
@@ -284,24 +288,32 @@ export function useAleoTrade(): UseAleoTradeReturn {
       try {
         let txId = `tx_mint_${Date.now()}`;
 
+        // Execute mint transition (testnet only)
         if (executeTransaction) {
-          const result = await executeTransaction({
-            program: PROGRAM_ID,
-            function: 'mint_tokens',
-            inputs: [
-              tokenId.endsWith('field') ? tokenId : `${tokenId}field`,
-              `${amountBase}u128`,
-            ],
-            fee: 300_000,
-          });
-          if (result?.transactionId) txId = result.transactionId;
+          try {
+            const result = await executeTransaction({
+              program: PROGRAM_ID,
+              function: 'mint',
+              inputs: [
+                toAleoField(tokenId.replace('field', '')),
+                toAleoU128(amount),
+              ],
+              fee: 300000,
+            });
+            if (result?.transactionId) {
+              txId = result.transactionId;
+            }
+          } catch (txErr: any) {
+            console.warn('On-chain mint failed:', txErr.message);
+            throw txErr;
+          }
         }
 
         return txId;
       } catch (err: any) {
-        const msg = err.message || 'Failed to mint tokens';
-        setError(msg);
-        throw new Error(msg);
+        const errorMsg = err.message || 'Failed to mint tokens';
+        setError(errorMsg);
+        throw new Error(errorMsg);
       } finally {
         setIsProcessing(false);
       }
@@ -309,47 +321,61 @@ export function useAleoTrade(): UseAleoTradeReturn {
     [connected, address, executeTransaction]
   );
 
-  return { createTrade, executeTrade, cancelTrade, mintTokens, isProcessing, error, clearError };
+  return {
+    createTrade,
+    executeTrade,
+    cancelTrade,
+    mintTokens,
+    generateTicket,
+    isProcessing,
+    error,
+    clearError,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// useTokenBalances hook
-// ---------------------------------------------------------------------------
+// Hook for fetching and managing token balances
 export function useTokenBalances() {
-  const { connected, requestRecords } = useWallet() as any;
+  const { connected, address, requestRecords } = useWallet();
   const { balances, setBalances } = useAppStore();
   const [isLoading, setIsLoading] = useState(false);
 
   const refreshBalances = useCallback(async () => {
-    if (!connected || !requestRecords) return;
+    if (!connected) return;
 
     setIsLoading(true);
     try {
-      const records: any[] = await requestRecords(PROGRAM_ID);
-      const newBalances: Record<string, string> = {};
-      records?.forEach((record: any) => {
-        const tokenId: string = record?.token_id ?? record?.data?.token_id ?? '';
-        const rawAmount: string = record?.amount ?? record?.data?.amount ?? '0';
-        const amount = rawAmount.replace('u128', '').trim();
-        if (tokenId) {
-          newBalances[tokenId] = (
-            BigInt(newBalances[tokenId] || '0') + BigInt(amount || '0')
-          ).toString();
+      // Fetch actual balances from Aleo via wallet
+      if (requestRecords) {
+        const records = await requestRecords(PROGRAM_ID);
+        // Process records into balances
+        const newBalances: Record<string, string> = {};
+        records?.forEach((record: any) => {
+          if (record.data?.token_id && record.data?.amount) {
+            const tokenId = record.data.token_id;
+            const amount = record.data.amount.replace('u128', '');
+            newBalances[tokenId] = (BigInt(newBalances[tokenId] || '0') + BigInt(amount)).toString();
+          }
+        });
+        if (Object.keys(newBalances).length > 0) {
+          setBalances(newBalances);
         }
-      });
-      if (Object.keys(newBalances).length > 0) {
-        setBalances(newBalances);
       }
     } catch (error) {
-      console.error('[GhostSwap] Failed to refresh balances:', error);
+      console.error('Failed to refresh balances:', error);
     } finally {
       setIsLoading(false);
     }
   }, [connected, requestRecords, setBalances]);
 
   useEffect(() => {
-    if (connected) refreshBalances();
+    if (connected) {
+      refreshBalances();
+    }
   }, [connected, refreshBalances]);
 
-  return { balances, isLoading, refreshBalances };
+  return {
+    balances,
+    isLoading,
+    refreshBalances,
+  };
 }

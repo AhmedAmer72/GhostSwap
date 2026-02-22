@@ -90,7 +90,7 @@ interface AppState {
   // Transaction history
   transactions: {
     id: string;
-    type: 'create_order' | 'execute_swap' | 'cancel_order';
+    type: 'create_order' | 'execute_swap' | 'cancel_order' | 'generate_ticket' | 'mint';
     status: 'pending' | 'confirmed' | 'failed';
     timestamp: number;
     orderId?: string;
