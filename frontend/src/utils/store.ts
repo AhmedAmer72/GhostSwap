@@ -72,6 +72,8 @@ export interface TradeOrder {
   expiresAt: number;
   createdAt: number;
   status: 'pending' | 'fulfilled' | 'cancelled' | 'expired';
+  /** Raw record plaintext returned by the wallet after generate_ticket — needed by Bob for execute_swap */
+  recordPlaintext?: string;
 }
 
 // Global app state
@@ -105,6 +107,7 @@ interface AppState {
   setBalances: (balances: Record<string, string>) => void;
   addOrder: (order: TradeOrder) => void;
   updateOrderStatus: (orderId: string, status: TradeOrder['status']) => void;
+  setOrderRecordPlaintext: (orderId: string, plaintext: string) => void;
   addTransaction: (tx: AppState['transactions'][0]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -142,6 +145,13 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           myOrders: state.myOrders.map((o) =>
             o.orderId === orderId ? { ...o, status } : o
+          ),
+        })),
+
+      setOrderRecordPlaintext: (orderId, plaintext) =>
+        set((state) => ({
+          myOrders: state.myOrders.map((o) =>
+            o.orderId === orderId ? { ...o, recordPlaintext: plaintext } : o
           ),
         })),
 

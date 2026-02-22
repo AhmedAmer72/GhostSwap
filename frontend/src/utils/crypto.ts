@@ -9,7 +9,7 @@ const LINK_PREFIX = 'ghost';
 // Uses URL-safe base64 JSON — no encryption needed since the link's
 // randomness (orderId + nonce) already acts as an unguessable capability URL.
 export function encodeTradeLink(order: TradeOrder): string {
-  const payload = {
+  const payload: Record<string, unknown> = {
     v: '2',
     oid: order.orderId,
     ma: order.makerAddress,
@@ -21,6 +21,8 @@ export function encodeTradeLink(order: TradeOrder): string {
     exp: order.expiresAt,
     ts: order.createdAt,
   };
+  // Include the record plaintext if Alice has fetched it after generate_ticket
+  if (order.recordPlaintext) payload.rp = order.recordPlaintext;
   const b64 = btoa(JSON.stringify(payload))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -59,6 +61,7 @@ export function decodeTradeLink(linkData: string, tokens: Token[]): TradeOrder |
       expiresAt: payload.exp as number,
       createdAt: payload.ts as number,
       status: 'pending',
+      recordPlaintext: (payload.rp as string | undefined) ?? undefined,
     };
   } catch (error) {
     console.error('Failed to decode trade link:', error);
