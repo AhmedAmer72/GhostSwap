@@ -8,119 +8,99 @@ import { ShieldWalletAdapter } from '@provablehq/aleo-wallet-adaptor-shield';
 import { LeoWalletAdapter } from '@provablehq/aleo-wallet-adaptor-leo';
 import { DecryptPermission } from '@provablehq/aleo-wallet-adaptor-core';
 import { Network } from '@provablehq/aleo-types';
-import { WalletName } from '@provablehq/aleo-wallet-standard';
 import '@provablehq/aleo-wallet-adaptor-react-ui/dist/styles.css';
 
 const PROGRAM_ID = 'ghostswap_otc_v2.aleo';
-// Key used by the @provablehq library itself (it clears this on disconnect).
 const STORAGE_KEY = 'ghostswap-wallet';
-// Our own backup key — the library NEVER touches this, so it survives the
-// library clearing STORAGE_KEY when the wallet adapter fires 'disconnect'.
-const WALLET_NAME_KEY = 'ghostswap-wallet-name';
+export const WALLET_NAME_KEY = 'ghostswap-wallet-name';
 
-// Lazy wallet adapter initialization - only created once on client
+// ---------------------------------------------------------------------------
+// THE FIX
+//
+// Shield Wallet fires a 'disconnect' event on every client-side navigation.
+// Every previous approach tried to *react* to that disconnect (cooldowns,
+// selectWallet calls, etc.) and all of them eventually called adapter.connect()
+// which made Shield show the "CONNECT TO THIS SITE?" popup.
+//
+// The correct fix: intercept Shield's 'disconnect' event at the adapter level
+// and DROP it during a short window after navigation. The library never sees
+// the disconnect -> never wipes state -> never calls connect() -> no popup.
+// ---------------------------------------------------------------------------
+
+// Module-level flag read by the patched adapter emit().
+let _suppressDisconnect = false;
+let _suppressTimer: ReturnType<typeof setTimeout> | null = null;
+
+function startNavigationWindow() {
+  _suppressDisconnect = true;
+  if (_suppressTimer) clearTimeout(_suppressTimer);
+  // 600 ms is enough for Shield to fire and finish its disconnect event.
+  _suppressTimer = setTimeout(() => { _suppressDisconnect = false; }, 600);
+}
+
+// Wallet adapter singletons — created once, patched once.
 let walletsInstance: (ShieldWalletAdapter | LeoWalletAdapter)[] | null = null;
 
 function getWallets() {
   if (typeof window === 'undefined') return [];
   if (!walletsInstance) {
-    walletsInstance = [
+    const adapters: (ShieldWalletAdapter | LeoWalletAdapter)[] = [
       new ShieldWalletAdapter(),
       new LeoWalletAdapter({ appName: 'GhostSwap' }),
     ];
+
+    // Patch each adapter: swallow 'disconnect' events while _suppressDisconnect is true.
+    for (const adapter of adapters) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const orig = (adapter as any).emit.bind(adapter);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (adapter as any).emit = (event: string, ...args: unknown[]) => {
+        if (event === 'disconnect' && _suppressDisconnect) {
+          console.log('[GhostSwap] Navigation detected — dropping wallet disconnect event');
+          return false;
+        }
+        return orig(event, ...args);
+      };
+    }
+
+    walletsInstance = adapters;
   }
   return walletsInstance;
 }
 
-// Auto-reconnect component that runs inside the wallet context.
-//
-// ROOT CAUSE of the popup-on-navigation bug:
-//   Shield Wallet fires a native 'disconnect' event on every URL change.
-//   Our code detected connected=false and immediately called selectWallet(),
-//   which triggered the library's autoConnect effect → adapter.connect() →
-//   Shield showed the "CONNECT TO THIS SITE?" confirmation popup.
-//
-// FIX:
-//   Detect navigation with usePathname. When the path changes, set a 1.5 s
-//   cooldown during which we suppress any reconnect attempt. Shield often
-//   reconnects on its own within that window without needing our help (and
-//   without showing a popup). If it does NOT reconnect within 1.5 s the
-//   disconnect is genuine and we restore the session via selectWallet().
-function WalletAutoConnect({ children }: { children: React.ReactNode }) {
-  const { connected, connecting, selectWallet, wallets } = useWallet();
-  const reconnectAttempted = useRef(false);
-  // Track latest connected value inside callbacks without re-binding them.
-  const connectedRef = useRef(connected);
-  useEffect(() => { connectedRef.current = connected; }, [connected]);
-
-  // Navigation cooldown: set to true when the path changes, cleared after 1.5 s.
+// NavigationGuard — runs inside React tree to access usePathname.
+// Calls startNavigationWindow() on every path change so the suppress
+// window is open before Shield fires its disconnect event.
+function NavigationGuard() {
   const pathname = usePathname();
-  const navCooldown = useRef(false);
-  const prevPathname = useRef(pathname);
+  const prev = useRef(pathname);
 
   useEffect(() => {
-    if (pathname === prevPathname.current) return;
-    prevPathname.current = pathname;
-
-    // New page navigation: suppress reconnect for 1.5 s so Shield has time
-    // to reconnect on its own (which it does silently, without a popup).
-    navCooldown.current = true;
-    reconnectAttempted.current = false;
-    const t = setTimeout(() => { navCooldown.current = false; }, 1500);
-    return () => clearTimeout(t);
+    if (pathname === prev.current) return;
+    prev.current = pathname;
+    startNavigationWindow();
   }, [pathname]);
 
+  return null;
+}
+
+// SessionBackup — saves wallet name to our own key whenever connected.
+// This survives if the library ever wipes its own key on a real disconnect.
+function SessionBackup({ children }: { children: React.ReactNode }) {
+  const { connected } = useWallet();
+
   useEffect(() => {
-    if (connected) {
-      // Back up the wallet name under our own key.
-      // The library stores it in STORAGE_KEY as JSON.stringify(walletName).
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const name = typeof parsed === 'string'
-            ? parsed
-            : (parsed?.walletName ?? parsed?.name ?? null);
-          if (name) localStorage.setItem(WALLET_NAME_KEY, name);
-        }
-      } catch {/* ignore */}
-      reconnectAttempted.current = false;
-      return;
-    }
-
-    if (reconnectAttempted.current || connecting) return;
-
-    // Read from our backup key — intact even after the library wiped STORAGE_KEY.
-    const walletName = localStorage.getItem(WALLET_NAME_KEY);
-    if (!walletName) return;
-
-    const attempt = () => {
-      // Abort if: already attempted, wallet recovered on its own, or we're
-      // still in the navigation cooldown window (avoid triggering the popup).
-      if (reconnectAttempted.current || connectedRef.current || navCooldown.current) return;
-
-      const savedAdapter = wallets.find(w => w.adapter.name === walletName);
-      if (
-        savedAdapter &&
-        (savedAdapter.readyState === 'Installed' || savedAdapter.readyState === 'Loadable')
-      ) {
-        reconnectAttempted.current = true;
-        // Restore library's key first so its autoConnect effect sees the name.
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(walletName));
-        console.log('[GhostSwap] Restoring wallet session:', walletName);
-        // selectWallet() updates library state → adapter changes →
-        // library's autoConnect effect fires → adapter.connect() silently.
-        selectWallet(savedAdapter.adapter.name as WalletName);
-      }
-    };
-
-    // Immediate attempt (for non-navigation disconnects) + delayed fallback
-    // that fires after the navCooldown window to handle the case where Shield
-    // does NOT auto-reconnect on its own.
-    attempt();
-    const fallback = setTimeout(attempt, 1600);
-    return () => clearTimeout(fallback);
-  }, [connected, connecting, selectWallet, wallets]);
+    if (!connected) return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const name = typeof parsed === 'string'
+        ? parsed
+        : (parsed?.walletName ?? parsed?.name ?? null);
+      if (name) localStorage.setItem(WALLET_NAME_KEY, name);
+    } catch {}
+  }, [connected]);
 
   return <>{children}</>;
 }
@@ -129,7 +109,6 @@ interface WalletProviderProps {
   children: React.ReactNode;
 }
 
-// Internal provider that renders only on client
 function ClientWalletProvider({ children }: WalletProviderProps) {
   const wallets = useMemo(() => getWallets(), []);
 
@@ -143,27 +122,20 @@ function ClientWalletProvider({ children }: WalletProviderProps) {
       localStorageKey={STORAGE_KEY}
     >
       <WalletModalProvider>
-        <WalletAutoConnect>
+        <NavigationGuard />
+        <SessionBackup>
           {children}
-        </WalletAutoConnect>
+        </SessionBackup>
       </WalletModalProvider>
     </ProvableWalletProvider>
   );
 }
 
 export function AleoWalletProvider({ children }: WalletProviderProps) {
-  // Use a mounted flag to avoid SSR/hydration mismatch: getWallets() returns []
-  // on the server but creates adapters on the client.  The layout never
-  // re-mounts on navigation (Next.js App Router), so ClientWalletProvider stays
-  // alive for the entire session once it mounts.
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  // Pre-mount: render children so the page layout is visible immediately.
-  // The wallet button shows its loading/connect state handled by WalletButton.
   if (!mounted) return <>{children}</>;
 
   return <ClientWalletProvider>{children}</ClientWalletProvider>;
